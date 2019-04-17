@@ -5,6 +5,7 @@
 #include <string>
 #include <iostream>
 #include <time.h>
+#include <process.h>
 
 #include <GL/GL.h>
 #include <GL/glut.h>
@@ -24,6 +25,7 @@
 
 SOCKET Connection;
 
+hduVector3Dd global_position;
 
 struct PointMass
 {
@@ -35,92 +37,86 @@ struct PointMass
 };
 
 
-void ClientThread()
+hduVector3Dd ClientThread(hduVector3Dd position)
 {
 
 	//std::string buffer;
 	//int BufferLength;
 	char send_buffer [1024];
 	char rec_buffer[1024];
+	float result_x, result_y, result_z=0.0;
+	hduVector3Dd result_force;
 	int j;
-	int counter=0;
-	float fp_x=3.13;
-	float fp_y=4.13;
-	float fp_z=5.12;
+
 	
-	srand (static_cast <unsigned> (time(0)));
-	clock_t begin = clock();
-
-	while (counter<10000) 
-	{
-
-		
-		memset(send_buffer, 0, sizeof(send_buffer));
-		fp_x =  static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
-		fp_y =  static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
-		fp_z =  static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
-		j = sprintf_s(send_buffer,1024,"%f\n",fp_x);
-	    j += sprintf_s(send_buffer+j,1024-j,"%f\n",fp_y);
-	    j += sprintf_s(send_buffer+j,1024-j,"%f\n",fp_z);
-		
-		send(Connection, send_buffer, sizeof(send_buffer), NULL);
-
-		if ((strncmp(send_buffer, "exit", 4)) == 0) 
-		{
-			std::cout << "Client Exit...\n" << std::endl;
-			break;
-		}
-		//memset(buffer, 0, sizeof(buffer));
-		recv(Connection, rec_buffer, sizeof(rec_buffer), NULL);
-		
-		counter++;
-	}
-
-
-	clock_t end = clock();
-	double elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
-	std::cout<<"Elapsed seconds after 10000 rounds:"<<elapsed_secs<<" seconds"<<std::endl;
 	memset(send_buffer, 0, sizeof(send_buffer));
-	sprintf_s(send_buffer,1024,"%s","exit");
+	j = sprintf_s(send_buffer,1024,"%f\n",position[0]);
+	j += sprintf_s(send_buffer+j,1024-j,"%f\n",position[1]);
+	j += sprintf_s(send_buffer+j,1024-j,"%f\n",position[2]);
+		
 	send(Connection, send_buffer, sizeof(send_buffer), NULL);
-	std::cout << "Client Exit...\n" << std::endl;
-	return;
+
+	
+		//memset(buffer, 0, sizeof(buffer));
+
+	recv(Connection, rec_buffer, sizeof(rec_buffer), NULL);
+
+	sscanf_s(rec_buffer, "%f %f %f", &result_x, &result_y, &result_z);
+	result_force[0]=result_x;
+	result_force[1]=result_y;
+	result_force[2]=result_z;
+
+		
+	return result_force;
 
 }
 
 
+unsigned int _stdcall send_position(void* data){
+	char send_buffer [1024];
+
+
+	while(true){
+	int j;
+	 memset(send_buffer, 0, sizeof(send_buffer));
+	 j = sprintf_s(send_buffer,1024,"%f\n",global_position[0]);
+	 j += sprintf_s(send_buffer+j,1024-j,"%f\n",global_position[1]);
+	 j += sprintf_s(send_buffer+j,1024-j,"%f\n",global_position[2]);
+		
+	 send(Connection, send_buffer, sizeof(send_buffer), NULL);
+	 
+	// std::cout << "send: " << global_position[0] << " " << global_position[1] << " " << global_position[2] << std::endl;
+	}
+
+	return 0;
+}
+
 void HLCALLBACK computeForceCB(HDdouble force[3], HLcache *cache, void *userdata)
 {
-    PointMass *pPointMass = static_cast<PointMass *>(userdata);
+    char rec_buffer[1024];
+	float result_x, result_y, result_z=0.0;
+	
+	PointMass *pPointMass = static_cast<PointMass *>(userdata);
+	hlCacheGetDoublev(cache, HL_PROXY_POSITION, pPointMass->m_position);
+	global_position=pPointMass->m_position;
 
-    // Get the time delta since the last update.
-    HDdouble instRate;
-    hdGetDoublev(HD_INSTANTANEOUS_UPDATE_RATE, &instRate);
-    HDdouble deltaT = 1.0 / instRate;
-    
-    // Get the current proxy position from the state cache.
-    // Note that the effect state cache is maintained in workspace coordinates,
-    // so we don't need to do any transformations in using the proxy
-    // position for computing forces.
-    hduVector3Dd proxyPos;
-    hlCacheGetDoublev(cache, HL_PROXY_POSITION, proxyPos);
-    
-    // Compute the inertia force based on pulling the point mass around
-    // by a spring.
-    hduVector3Dd springForce = pPointMass->m_kStiffness * 
-        (proxyPos - pPointMass->m_position);
-    hduVector3Dd damperForce = -pPointMass->m_kDamping * pPointMass->m_velocity;
-    hduVector3Dd inertiaForce = springForce + damperForce;
-        
-    // Perform Euler integration of the point mass state.
-    hduVector3Dd acceleration = inertiaForce / pPointMass->m_mass;
-    pPointMass->m_velocity += acceleration * deltaT;    
-    pPointMass->m_position += pPointMass->m_velocity * deltaT;
-                                  
-    // Send the opposing force to the device.
-    force[0] += -inertiaForce[0];
-    force[1] += -inertiaForce[1];
-    force[2] += -inertiaForce[2];
+
+
+	recv(Connection, rec_buffer, sizeof(rec_buffer), NULL);
+
+	sscanf_s(rec_buffer, "%f %f %f", &result_x, &result_y, &result_z);
+
+
+	//std::cout<<"rec: "<<result_x<<" "<<result_y<<" "<<result_z<<std::endl;
+	
+	force[0]=result_x/3;
+	force[1]=result_y/3;
+	force[2]=result_z/3;
+	memset(rec_buffer, 0, sizeof(rec_buffer));
+
+	//force[0]=0;
+	//force[1]=0;
+	//force[2]=0;
 }
 
 
@@ -136,7 +132,7 @@ void HLCALLBACK startEffectCB(HLcache *cache, void *userdata)
     // Initialize the position of the mass to be at the proxy position.
     hlCacheGetDoublev(cache, HL_PROXY_POSITION, pPointMass->m_position);
 
-    pPointMass->m_velocity.set(0, 0, 0);
+    //pPointMass->m_velocity.set(0, 0, 0);
 }
 
 
@@ -220,6 +216,11 @@ int main()
 
 	 HLuint effect = hlGenEffects(1);        
 
+	//send Threading 
+	HANDLE send_Thread;
+	unsigned send_threadID;
+
+	send_Thread = (HANDLE)_beginthreadex(NULL, 0, &send_position, 0, 0, &send_threadID);
     // Initialize the point mass.
     PointMass pointMass;
     initPointMass(&pointMass);
@@ -233,6 +234,8 @@ int main()
     hlStartEffect(HL_EFFECT_CALLBACK, effect);
 
     hlEndFrame();
+
+	WaitForSingleObject(send_Thread, INFINITE);
 
     fprintf(stdout, "Press any key to stop the effect\n");
     while (!_kbhit())
@@ -254,6 +257,8 @@ int main()
     hlBeginFrame();
     hlStopEffect(effect);
     hlEndFrame();
+	CloseHandle(send_Thread);
+
 
     fprintf(stdout, "Shutting down...\n");
     getchar();
